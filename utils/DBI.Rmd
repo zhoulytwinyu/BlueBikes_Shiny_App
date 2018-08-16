@@ -1,0 +1,99 @@
+---
+title: "DBI"
+author: "Lingyu Zhou"
+date: "August 11, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# SQLite3
+To interact with SQLite3 databases, we need to first import relevant libraries:
+
+```{r}
+library(DBI)
+library(RSQLite) #DBI requires this "extension" to interact with SQlite3 databases.
+library(tidyverse)
+library(ggmap)
+library(ggplot2)
+```
+
+# Dataset
+Let's read in bluebikes dataset first
+
+```{r}
+datafile <- "201807-bluebikes-tripdata.csv"
+
+bluebikes_df <- read.csv(datafile, header=TRUE, as.is=TRUE)
+```
+
+## Pre-processing
+Separate the stations dataframe from trips dataframe, and prepare them for insertion into a relational database.
+
+### Preparing stations dataframe
+```{r}
+stations_df <- rbind(bluebikes_df %>% select(c("start.station.id","start.station.name",
+                                               "start.station.latitude","start.station.longitude"
+                                            )) %>%
+                                      rename(id="start.station.id",
+                                             name="start.station.name",
+                                             latitude="start.station.latitude",
+                                             longitude="start.station.longitude"),
+                     bluebikes_df %>% select(c(
+                                               "end.station.id","end.station.name",
+                                               "end.station.latitude","end.station.longitude"
+                                            )) %>%
+                                      rename(id="end.station.id",
+                                             name="end.station.name",
+                                             latitude="end.station.latitude",
+                                             longitude="end.station.longitude")
+                     )
+stations_df <- stations_df %>% distinct()
+stations_df <- stations_df[order(stations_df["id"]),]
+# 158 station is weird. Let's remove it.
+stations_df <- stations_df %>% filter ( id != 158 )
+```
+
+### Preparing trips dataframe
+```{r}
+trips_df <- bluebikes_df %>% select(c("tripduration","starttime",
+                                       "start.station.id","end.station.id",
+                                       "birth.year")) %>%
+                             rename(start_station_id="start.station.id",
+                                    end_station_id="end.station.id",
+                                    birth_year="birth.year")
+trips_df <- trips_df %>% mutate(startdate=as.numeric(substr(starttime,9,10)),
+                                starttime=as.numeric(substr(starttime,12,13))
+                                )
+# 158 station is weird. Let's remove it.
+trips_df <- trips_df %>% filter( start_station_id != 158 && end_station_id != 158)
+
+# Clean up
+rm(bluebikes_df)
+```
+
+# Database
+With data set read and processed, we can now put them into our database via DBI.
+
+## Putting data into database
+```{r}
+database <- "bluebikes_Jul2018.sqlite3"
+# We'd like to work with a empty database, rather than appending to it
+if (file.exists(database)){
+  file.remove(database)
+}
+
+conn <- dbConnect(RSQLite::SQLite(), database)              # To be closed
+
+# With an empty database
+dbListTables(conn)
+# We create/overwrite tables
+dbWriteTable(conn, "trips", trips_df)
+dbWriteTable(conn, "stations", stations_df)
+```
+## Close database connection
+```{r}
+dbDisconnect(conn)                                          # Closed
+```
